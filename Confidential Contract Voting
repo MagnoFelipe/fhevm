@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+pragma experimental ABIEncoderV2;
+
+import "@fhenixprotocol/contracts/FHE.sol";
+
+contract ConfidentialVoting {
+    // 管理员地址
+    address public owner;
+
+    // 候选人结构（加密存储）
+    struct Candidate {
+        euint32 encryptedVoteCount; // 加密的票数
+        string name;                // 明文存储的候选人名称
+    }
+
+    // 候选人列表
+    Candidate[] public candidates;
+
+    // 记录选民投票状态
+    mapping(address => bool) public hasVoted;
+
+    // 投票状态
+    bool public votingOpen;
+
+    // 使用 FHE 库的许可密钥
+    Permission internal permission;
+
+    // 仅管理员修饰符
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not contract owner");
+        _;
+    }
+
+    constructor(string[] memory candidateNames) {
+        owner = msg.sender;
+        votingOpen = true;
+        permission = FHE.permission();
+
+        // 初始化候选人
+        for (uint i = 0; i < candidateNames.length; i++) {
+            candidates.push(Candidate({
+                encryptedVoteCount: FHE.asEuint32(0), // 初始加密票数为0
+                name: candidateNames[i]
+            }));
+        }
+    }
+
+    // 投票函数（加密处理）
+    function vote(uint candidateIndex) public {
+        require(votingOpen, "Voting closed");
+        require(!hasVoted[msg.sender], "Already voted");
+        require(candidateIndex < candidates.length, "Invalid candidate");
+
+        // 获取当前候选人的加密票数
+        euint32 currentVotes = candidates[candidateIndex].encryptedVoteCount;
+        
+        // 在加密状态下增加票数（1票）
+        euint32 newVotes = FHE.add(currentVotes, FHE.asEuint32(1));
+        
+        // 更新加密票数
+        candidates[candidateIndex].encryptedVoteCount = newVotes;
+        
+        // 标记已投票
+        hasVoted[msg.sender] = true;
+    }
+
+    // 结束投票（仅管理员）
+    function endVoting() public onlyOwner {
+        votingOpen = false;
+    }
+
+    // 获取加密票数（仅管理员可解密）
+    function getEncryptedResults() public view onlyOwner returns (euint32[] memory) {
+        euint32[] memory results = new euint32[](candidates.length);
+        for (uint i = 0; i < candidates.length; i++) {
+            results[i] = candidates[i].encryptedVoteCount;
+        }
+        return results;
+    }
+
+    // 解密单个候选人的票数（需要许可密钥）
+    function decryptResult(uint candidateIndex) public view onlyOwner returns (uint32) {
+        require(candidateIndex < candidates.length, "Invalid candidate");
+        return FHE.decrypt(candidates[candidateIndex].encryptedVoteCount);
+    }
+}
